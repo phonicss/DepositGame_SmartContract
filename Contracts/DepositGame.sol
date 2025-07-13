@@ -145,7 +145,6 @@ contract DepositGame  {
     function pauseGame() public onlyOwner gameShouldBeActive {
         gameStatus = GameStatus.PAUSED;
         emit GamePaused("Game is paused.", block.timestamp);
-        checkUpdateGame();
     }
 
     function unPauseGame() public onlyOwner gameShouldBePaused {
@@ -165,23 +164,31 @@ contract DepositGame  {
     function makeDepsit() external payable gameShouldBeActive deadlineIsNotReached {
         require(msg.value > 0, "Invalid amount. Must be positive.");
         deposits[msg.sender] = Deposit({
-            amount: msg.value,
+            amount: deposits[msg.sender].amount + msg.value,
             timeStamp: block.timestamp 
         });
-        countDeposits++;
+
+        //add address in array
+        if (deposits[msg.sender].amount == 0) {
+            participants.push(msg.sender);
+            countDeposits++;
+        }
+        //Check game status
         checkUpdateGame();
 
+        //emit
+        emit Deposited("Deposit is done", msg.sender, block.timestamp);
+
         //Check maybe a new leader
-        if (msg.value > maxDeposit) {
+        if (deposits[msg.sender].amount > maxDeposit) {
             maxDeposit = msg.value;
             leader = msg.sender;
-        }
-        emit Deposited("Deposit is done", msg.sender, block.timestamp);
+        }  
     }
 
     receive() external payable gameShouldBeActive deadlineIsNotReached {
         deposits[msg.sender] = Deposit (
-           { amount: msg.value,
+           { amount: deposits[msg.sender].amount + msg.value,
             timeStamp: block.timestamp
         });
 
@@ -190,6 +197,8 @@ contract DepositGame  {
             maxDeposit = msg.value;
             leader = msg.sender;
         }
+        
+        //emit
         emit Deposited("ETH received via fallback", msg.sender, block.timestamp);
     }
    
