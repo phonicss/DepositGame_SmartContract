@@ -22,7 +22,6 @@ contract DepositGame  {
     constructor(
         string memory _name,
         string memory _description,
-        uint256 _goal,
         uint256 _durationInDays,
         uint256 _ownerPercent,
         uint256 _depositLimit
@@ -30,7 +29,6 @@ contract DepositGame  {
         require(msg.sender != address(0), "Invalid address.");
         require(bytes(_name).length > 0, "Name can not be empry.");
         require(bytes(_description).length > 0, "Description can not be empty.");
-        require(_goal > 0, "Goal must be positive.");
         require(_durationInDays > 0, "Duration must be positive.");
         require(_durationInDays < 100, "Limit is 100 days.");
         require(_ownerPercent <= 100 && _ownerPercent > 0, "Percent must be between 0 - 100.");
