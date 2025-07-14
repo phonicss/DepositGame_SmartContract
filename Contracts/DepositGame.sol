@@ -7,13 +7,13 @@ contract DepositGame  {
     string public name;
     string public description;
     address public owner;
-    uint256 public goal;
     uint256 public deadLine;
     uint256 public ownerPercent;
     bool private locked;
     address leader;
     uint256 maxDeposit;
     uint256 countDeposits;
+    uint256 public DEPOSIT_LIMIT;
    
     // Enum
     enum GameStatus {INACTIVE, ACTIVE, PAUSED, COMPLETED, TERMINATED, FINISHED}
@@ -24,23 +24,26 @@ contract DepositGame  {
         string memory _description,
         uint256 _goal,
         uint256 _durationInDays,
-        uint256 _ownerPercent
+        uint256 _ownerPercent,
+        uint256 _depositLimit
     ) {
         require(msg.sender != address(0), "Invalid address.");
         require(bytes(_name).length > 0, "Name can not be empry.");
         require(bytes(_description).length > 0, "Description can not be empty.");
         require(_goal > 0, "Goal must be positive.");
         require(_durationInDays > 0, "Duration must be positive.");
-        require(_ownerPercent <= 100 || _ownerPercent > 0, "Percent must be between 0 - 100.");
+        require(_durationInDays < 100, "Limit is 100 days.");
+        require(_ownerPercent <= 100 && _ownerPercent > 0, "Percent must be between 0 - 100.");
+        require(_depositLimit > 0, "Deposit limit should be positive.");
         
         owner = msg.sender;
         gameStatus = GameStatus.INACTIVE;
         name = _name;
         description = _description;
-        goal = _goal;
         ownerPercent = _ownerPercent;
-        maxDeposit = 0;
+        DEPOSIT_LIMIT = _depositLimit;
         deadLine = block.timestamp + (_durationInDays * 1 days);
+        maxDeposit = 0;
     }
 
     //Events
@@ -48,7 +51,7 @@ contract DepositGame  {
     event WithDrawValue(string _message, address indexed _owner, uint256 _value, uint256 _time);
     event Deposited(string _message, address _sender, uint256 _time); 
     event MyDepositWithdrawn(string _message, address _sender, uint256 _value, uint256 _time);
-    event GameStarted(string _message, uint256 _goal, uint256 _time);
+    event GameStarted(string _message, uint256 deadLine, uint256 _time);
     event GamePaused(string _message, uint256 _time);
     event GameUnpaused(string _message, uint256 _time);
     event GameCompleted(string _message, address indexed  _winnder, uint256 _winAmount, uint256 _numberOfDeposits, uint256 _time);
@@ -88,7 +91,7 @@ contract DepositGame  {
     }
 
     modifier gameShouldbeInactive() {
-        require(gameStatus == GameStatus.INACTIVE || gameStatus == GameStatus.COMPLETED, "Game is active or paused.");
+        require(gameStatus == GameStatus.INACTIVE && gameStatus == GameStatus.COMPLETED, "Game is active or paused.");
         _;
     }
 
@@ -107,11 +110,6 @@ contract DepositGame  {
         _;
     }
 
-    modifier goalShouldBeReached() {
-        require(address(this).balance >= goal, "Goal is not reached yet.");
-        _;
-    }
-
     modifier deadlineReached() {
         require(deadLine < block.timestamp, "Deadline is not over.");
         _;
@@ -122,24 +120,19 @@ contract DepositGame  {
         _;
     }
 
-    modifier goalOrDeadLineReached() {
-        require(deadLine > block.timestamp || address(this).balance >= goal, " ");
-        _;
-    }
-
-    function checkUpdateGame() internal {
+    function checkUpdateGame() internal onlyOwner nonReentrant {
         if (gameStatus == GameStatus.ACTIVE) {
             if (block.timestamp >= deadLine) {
                 gameStatus = GameStatus.COMPLETED;
                 emit GameCompleted("Game has ended", leader, address(this).balance, countDeposits, block.timestamp);
+                completeGame();
             }
         }
     }
 
-    
     function startGame() public onlyOwner gameShouldbeInactive gameBalanceShouldBeEmpty {
         gameStatus = GameStatus.ACTIVE;
-        emit GameStarted("Game has started!", goal, block.timestamp);
+        emit GameStarted("Game has started!", deadLine, block.timestamp);
     }
 
     function pauseGame() public onlyOwner gameShouldBeActive {
@@ -155,14 +148,17 @@ contract DepositGame  {
 
     function terminateGame() public onlyOwner gameShouldBeActive {
         checkUpdateGame();
-        if (gameStatus != GameStatus.COMPLETED){
+        if (gameStatus != GameStatus.COMPLETED || gameStatus != GameStatus.FINISHED){
              gameStatus = GameStatus.TERMINATED;
              emit GameTerminated("Game is terminated", block.timestamp);
+             if (countDeposits <= 100) { refundAll();}
         }
     }
 
     function makeDepsit() external payable gameShouldBeActive deadlineIsNotReached {
         require(msg.value > 0, "Invalid amount. Must be positive.");
+        require(msg.value < DEPOSIT_LIMIT, "Maximum deposit is lower.");
+        require(msg.sender != address(0), "Invalid address");
         deposits[msg.sender] = Deposit({
             amount: deposits[msg.sender].amount + msg.value,
             timeStamp: block.timestamp 
@@ -181,7 +177,7 @@ contract DepositGame  {
 
         //Check maybe a new leader
         if (deposits[msg.sender].amount > maxDeposit) {
-            maxDeposit = msg.value;
+            maxDeposit = deposits[msg.sender].amount;
             leader = msg.sender;
         }  
     }
@@ -192,12 +188,18 @@ contract DepositGame  {
             timeStamp: block.timestamp
         });
 
+         //add address in array
+        if (deposits[msg.sender].amount == 0) {
+            participants.push(msg.sender);
+            countDeposits++;
+        }
+
         //Check maybe a new leader
-        if (msg.value > maxDeposit) {
-            maxDeposit = msg.value;
+        if (deposits[msg.sender].amount > maxDeposit) {
+            maxDeposit = deposits[msg.sender].amount;
             leader = msg.sender;
         }
-        
+
         //emit
         emit Deposited("ETH received via fallback", msg.sender, block.timestamp);
     }
@@ -214,7 +216,23 @@ contract DepositGame  {
         emit MyDepositWithdrawn("My deposit is withdrawed", msg.sender, balance, block.timestamp);
     }
 
-    function completeGame() public onlyOwner gameShouldBeActive nonReentrant goalShouldBeReached {
+    function refundAll() public onlyOwner nonReentrant gameTerminated {
+        require(countDeposits <= 50, "To many participants. Please use refund");
+        for (uint256 i = 0; i < countDeposits; i++) {
+            uint256 amount = deposits[participants[i]].amount;
+            address player = participants[i];
+            if (amount > 0) {
+                deposits[player].amount = 0;
+                (bool success, ) = player.call{value: amount, gas: 20000}("");
+                if (!success){
+                    deposits[player].amount = amount;
+                    continue;
+                }
+            }
+        }
+    }
+
+    function completeGame() internal onlyOwner gameShouldBeActive nonReentrant {
         gameStatus = GameStatus.COMPLETED;
         //percentages count
         uint256 balance = address(this).balance;
